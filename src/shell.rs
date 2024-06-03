@@ -234,7 +234,7 @@ impl Worker {
             } else {
                 eprintln!("{s} is invalied argment");
                 self.exit_value = 1;
-                shell_tx.seld(ShellMsg::Continue(self.exit_value)).unwrap();
+                shell_tx.send(ShellMsg::Continue(self.exit_value)).unwrap();
                 return true;
             }
         } else {
@@ -244,4 +244,30 @@ impl Worker {
         shell_tx.send(ShellMsg::Quit(exit_value)).unwrap(); // 終了
         true
     }
+
+    fn run_fg(&mut self, args: &[&str], shell_tx: &SyncSender<ShellMsg>) -> bool {
+        self.exit_value = 1;
+
+        if args.len() < 2 {
+            eprintln!("Usage: fg <数字>");
+            shell_tx.send(ShellMsg::Continue(self.exit_value)).unwrap();
+            return true;
+        }
+
+        if let Ok(n) = args[1].parse::<usize>() {
+            if let Some((pgid, cmd)) = self.jobs.get(&n) {
+                eprintln!("[{n}] 再開 \t {cmd}");
+                self.fg = Some(*pgid);
+                tcsetpgrp(libc::STDIN_FILENO, *pgid).unwrap();
+
+                killpg(*pgid, Signal::SIGCONT).unwrap();
+                return true;
+            }
+        }
+
+        eprintln!("ERROR(HollyShell): The job '{}' is not found.", args[1]);
+        shell_tx.send(ShellMsg::Continue(self.exit_value)).unwrap();
+        true
+    }
+
 }
