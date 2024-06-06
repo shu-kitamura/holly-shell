@@ -269,5 +269,21 @@ impl Worker {
         shell_tx.send(ShellMsg::Continue(self.exit_value)).unwrap();
         true
     }
+}
 
+/// ドロップ時にクロージャ f を呼び出す型。
+struct CleanUp<F>
+where
+    F: Fn(),
+{
+    f: F,
+}
+
+impl<F> Drop for CleanUp<F>
+where
+    F: Fn(),
+{
+    fn drop(&mut self) {
+        (self.f)()
+    }
 }
