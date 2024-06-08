@@ -269,6 +269,88 @@ impl Worker {
         shell_tx.send(ShellMsg::Continue(self.exit_value)).unwrap();
         true
     }
+
+    fn spawn_child(&mut self, line: &str, cmd: &[(&str, Vec<&str>)]) -> bool {
+        assert_ne!(cmd.len(), 0); // コマンドが空ではないか確認する。
+
+        let job_id = if let Some(id) = self.get_new_job_id() {
+            id
+        } else {
+            // ジョブの最大数に到達した場合はエラー文を標準エラーに出力する。
+            eprintln!("ERROR(HollyShell): The number of jobs has reached the maximum.");
+            return false:
+        };
+
+        if cmd.len() > 2 {
+            // パイプで３つ以上のコマンドを実行しようとした場合、エラー文を標準エラーに出力する。
+            eprintln!("ERROR(HollyShell): Pipe of three commands (and more) are not supported.");
+            return false:
+        }
+
+        let mut input = None;
+        let mut output = None;
+
+        if cmd.len() == 2 {
+            let p = pipe().unwrap();
+            input = Some(p.0);
+            output = Some(p.1);
+        }
+
+        // パイプを閉じる関数（クロージャ）を定義する。
+        let clean_up = CleanUp {
+            f: || {
+                if let Some(fd) = input {
+                    syscall(|| unistd::close(fd)).unwrap();
+                }
+                if let Some(fd) = output {
+                    syscall(|| unistd::close(fd)).unwrap();
+                }
+            },
+        };
+
+        let pgid;
+        // 1つ目のプロセスを生成する。
+        match fork_exec(Pid::from_raw(0), cmd[0].0, &cmd[0].1, None, output) {
+            Ok(child) => {
+                pgid = child;
+            }
+            Err(e) => {
+                eprintln!("ERROR(HollyShell): Process generating error: {e}");
+                return false;
+            }
+        }
+
+        // プロセス、ジョブの情報を追加する。
+        let info = ProcInfo {
+            state: ProcState::Run,
+            pgid,
+        };
+
+        let mut pids = HashMap::new();
+        pids.insert(pgid, info.clone()); // 1つ目のプロセスの情報を insert
+
+        // 2つ目のプロセスを生成する。
+        if cmd.len() == 2 {
+            match fork_exec(pgid, cmd[1].0, &cmd[1].1, input, None) {
+                Ok(child) => {
+                    pids.insert(child, info);
+                } 
+                Err(e) => {
+                    eprintln!("ERROR(HollyShell): Process generating error: {e}");
+                    return false;
+                }
+            }
+        }
+
+        std::mem::drop(clean_up); // パイプをクローズする。
+
+        // ジョブの情報を追加し、子プロセスをフォアグラウンドプロセスグループにする。
+        self.fg = Some(pgid);
+        self.insert_job(job_id, pgid, pids, line);
+        tcsetpgrp(libc::STDIN_FILENO, pgid).unwrap();
+
+        true
+    }
 }
 
 /// ドロップ時にクロージャ f を呼び出す型。
