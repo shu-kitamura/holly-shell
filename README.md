@@ -1,6 +1,6 @@
 # holly-shell
 
-`holly-shell`は、シェルをRustで実装するものです。
+`holly-shell`はシェルをRustで実装するものです。
 
 # 機能（Function）
 
